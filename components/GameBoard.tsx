@@ -15,48 +15,24 @@ interface GameBoardProps {
   isHugging: boolean;
 }
 
-// Standard piece values in centipawns for better granularity
-const PIECE_VALUES: Record<string, number> = {
-  p: 100,
-  n: 320,
-  b: 330,
-  r: 500,
-  q: 900,
-  k: 20000
-};
-
-// Basic positional bonuses to make the AI smarter (e.g., centralizing pieces)
-const POSITION_BONUS: Record<string, number[][]> = {
-  p: [
-    [0,  0,  0,  0,  0,  0,  0,  0],
-    [50, 50, 50, 50, 50, 50, 50, 50],
-    [10, 10, 20, 30, 30, 20, 10, 10],
-    [5,  5, 10, 25, 25, 10,  5,  5],
-    [0,  0,  0, 20, 20,  0,  0,  0],
-    [5, -5,-10,  0,  0,-10, -5,  5],
-    [5, 10, 10,-20,-20, 10, 10,  5],
-    [0,  0,  0,  0,  0,  0,  0,  0]
-  ],
-  n: [
-    [-50,-40,-30,-30,-30,-30,-40,-50],
-    [-40,-20,  0,  0,  0,  0,-20,-40],
-    [-30,  0, 10, 15, 15, 10,  0,-30],
-    [-30,  5, 15, 20, 20, 15,  5,-30],
-    [-30,  0, 15, 20, 20, 15,  0,-30],
-    [-30,  5, 10, 15, 15, 10,  5,-30],
-    [-40,-20,  0,  5,  5,  0,-20,-40],
-    [-50,-40,-30,-30,-30,-30,-40,-50]
-  ],
-  b: [
-    [-20,-10,-10,-10,-10,-10,-10,-20],
-    [-10,  0,  0,  0,  0,  0,  0,-10],
-    [-10,  0,  5, 10, 10,  5,  0,-10],
-    [-10,  5,  5, 10, 10,  5,  5,-10],
-    [-10,  0, 10, 10, 10, 10,  0,-10],
-    [-10, 10, 10, 10, 10, 10, 10,-10],
-    [-10,  5,  0,  0,  0,  0,  5,-10],
-    [-20,-10,-10,-10,-10,-10,-10,-20]
-  ]
+// Helper to generate IDs for pieces to keep them tracked during moves
+const generatePieceIdMap = (chess: Chess) => {
+  const newMap: Record<string, string> = {};
+  const counts: Record<string, number> = {};
+  const board = chess.board();
+  
+  for (let r = 0; r < 8; r++) {
+    for (let j = 0; j < 8; j++) {
+      const piece = board[r][j];
+      if (piece) {
+        const typeColor = `${piece.color}${piece.type}`;
+        counts[typeColor] = (counts[typeColor] || 0) + 1;
+        const square = `${String.fromCharCode(97 + j)}${8 - r}`;
+        newMap[square] = `${typeColor}-${counts[typeColor]}`;
+      }
+    }
+  }
+  return newMap;
 };
 
 const GameBoard: React.FC<GameBoardProps> = ({ game, setGame, settings, onEnd, setLastMessage, isHugging }) => {
@@ -64,120 +40,41 @@ const GameBoard: React.FC<GameBoardProps> = ({ game, setGame, settings, onEnd, s
   const [validMoves, setValidMoves] = useState<string[]>([]);
   const [lastMove, setLastMove] = useState<Move | null>(null);
   const [isShaking, setIsShaking] = useState(false);
+  const [isEngineThinking, setIsEngineThinking] = useState(false);
   
-  const [pieceIdMap, setPieceIdMap] = useState<Record<string, string>>({});
-  const isFirstRender = useRef(true);
+  // Initialize with the current game state to avoid blank first render
+  const [pieceIdMap, setPieceIdMap] = useState<Record<string, string>>(() => generatePieceIdMap(game));
+  const stockfishWorker = useRef<Worker | null>(null);
   const coachMsgs = COACH_MESSAGES_I18N[settings.language];
 
-  const syncPieceIds = useCallback((chess: Chess) => {
-    const newMap: Record<string, string> = {};
-    const counts: Record<string, number> = {};
-    const board = chess.board();
-    
-    for (let r = 0; r < 8; r++) {
-      for (let j = 0; j < 8; j++) {
-        const piece = board[r][j];
-        if (piece) {
-          const typeColor = `${piece.color}${piece.type}`;
-          counts[typeColor] = (counts[typeColor] || 0) + 1;
-          const square = `${String.fromCharCode(97 + j)}${8 - r}`;
-          newMap[square] = `${typeColor}-${counts[typeColor]}`;
-        }
-      }
-    }
-    setPieceIdMap(newMap);
-  }, []);
-
+  // Initialize Stockfish Worker with Cross-Origin bypass
   useEffect(() => {
-    if (isFirstRender.current) {
-      syncPieceIds(game);
-      isFirstRender.current = false;
-    }
-  }, [game, syncPieceIds]);
+    let worker: Worker | null = null;
 
-  const evaluateBoard = (chess: Chess): number => {
-    let totalEvaluation = 0;
-    const board = chess.board();
-    for (let r = 0; r < 8; r++) {
-      for (let c = 0; c < 8; c++) {
-        const piece = board[r][c];
-        if (piece) {
-          let value = PIECE_VALUES[piece.type] || 0;
-          
-          // Apply positional bonuses
-          const bonusTable = POSITION_BONUS[piece.type];
-          if (bonusTable) {
-            // Flip table for black pieces
-            const bonus = piece.color === 'w' 
-              ? bonusTable[r][c] 
-              : bonusTable[7 - r][c];
-            value += bonus;
-          }
-          
-          totalEvaluation += (piece.color === 'w' ? value : -value);
-        }
-      }
-    }
-    return totalEvaluation;
-  };
+    const initWorker = async () => {
+      try {
+        // Fetch Stockfish script and create a Blob URL to avoid CORS/Worker-Origin issues
+        const response = await fetch('https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js');
+        const script = await response.text();
+        const blob = new Blob([script], { type: 'application/javascript' });
+        const workerUrl = URL.createObjectURL(blob);
+        
+        worker = new Worker(workerUrl);
+        stockfishWorker.current = worker;
 
-  const minimax = (chess: Chess, depth: number, alpha: number, beta: number, isMaximizing: boolean): number => {
-    if (depth === 0 || chess.isGameOver()) {
-      return -evaluateBoard(chess);
-    }
-    const moves = chess.moves();
-    if (isMaximizing) {
-      let bestScore = -Infinity;
-      for (const move of moves) {
-        chess.move(move);
-        const score = minimax(chess, depth - 1, alpha, beta, !isMaximizing);
-        chess.undo();
-        bestScore = Math.max(bestScore, score);
-        alpha = Math.max(alpha, bestScore);
-        if (beta <= alpha) break;
+        worker.postMessage('uci');
+        worker.postMessage('ucinewgame');
+      } catch (err) {
+        console.error("Failed to load Stockfish engine:", err);
       }
-      return bestScore;
-    } else {
-      let bestScore = Infinity;
-      for (const move of moves) {
-        chess.move(move);
-        const score = minimax(chess, depth - 1, alpha, beta, !isMaximizing);
-        chess.undo();
-        bestScore = Math.min(bestScore, score);
-        beta = Math.min(beta, bestScore);
-        if (beta <= alpha) break;
-      }
-      return bestScore;
-    }
-  };
+    };
 
-  const getBestMove = (chess: Chess, depth: number): string => {
-    const moves = chess.moves();
-    // Sort moves to help with alpha-beta pruning (captures first)
-    moves.sort((a, b) => {
-        if (a.includes('x') && !b.includes('x')) return -1;
-        if (!a.includes('x') && b.includes('x')) return 1;
-        return 0;
-    });
+    initWorker();
 
-    let bestMove = moves[0];
-    let bestValue = -Infinity;
-    
-    for (const move of moves) {
-      chess.move(move);
-      // AI assumes it is the "black" player if user is "white" (userTeam 'w')
-      // but minimax here is relative to material sign. 
-      // evaluateBoard returns white - black.
-      // If AI is black, it wants to MINIMIZE white-black (Maximizing -Evaluate)
-      const boardValue = minimax(chess, depth - 1, -Infinity, Infinity, false);
-      chess.undo();
-      if (boardValue > bestValue) {
-        bestValue = boardValue;
-        bestMove = move;
-      }
-    }
-    return bestMove;
-  };
+    return () => {
+      if (worker) worker.terminate();
+    };
+  }, []);
 
   const makeMove = useCallback((move: any) => {
     try {
@@ -198,13 +95,14 @@ const GameBoard: React.FC<GameBoardProps> = ({ game, setGame, settings, onEnd, s
           soundManager.playMove();
         }
 
+        // Update Piece IDs based on the move
         setPieceIdMap(prev => {
           const next = { ...prev };
           const pieceId = next[result.from];
           delete next[result.from];
           if (result.promotion) {
-             next[result.to] = `${result.color}${result.promotion}-${pieceId.split('-')[1]}`;
-          } else {
+             next[result.to] = `${result.color}${result.promotion}-${pieceId ? pieceId.split('-')[1] : Date.now()}`;
+          } else if (pieceId) {
              next[result.to] = pieceId;
           }
           return next;
@@ -228,61 +126,80 @@ const GameBoard: React.FC<GameBoardProps> = ({ game, setGame, settings, onEnd, s
         return true;
       }
     } catch (e) {
+      console.error("Move error:", e);
       return false;
     }
     return false;
   }, [game, setGame, settings, onEnd, setLastMessage, coachMsgs]);
 
+  // Handle Computer Turn via Stockfish
   useEffect(() => {
-    if (settings.isComputer && game.turn() !== settings.userTeam && !game.isGameOver()) {
-      const timer = setTimeout(() => {
-        const moves = game.moves();
-        if (moves.length === 0) return;
-        
-        let selectedMove: string;
-        const currentChess = new Chess(game.fen());
-        
-        if (settings.difficulty === 'easy') {
-          // Mostly random, occasional depth 1
-          if (Math.random() < 0.7) {
-            selectedMove = moves[Math.floor(Math.random() * moves.length)];
-          } else {
-            selectedMove = getBestMove(currentChess, 1);
+    if (settings.isComputer && game.turn() !== settings.userTeam && !game.isGameOver() && !isEngineThinking) {
+      const worker = stockfishWorker.current;
+      if (!worker) return;
+
+      setIsEngineThinking(true);
+
+      const onMessage = (e: MessageEvent) => {
+        const line = e.data;
+        if (line.startsWith('bestmove')) {
+          const move = line.split(' ')[1];
+          if (move && move !== '(none)') {
+            makeMove({
+              from: move.substring(0, 2),
+              to: move.substring(2, 4),
+              promotion: move.length === 5 ? move[4] : 'q'
+            });
           }
-        } else if (settings.difficulty === 'medium') {
-          // Decent play at depth 2
-          selectedMove = getBestMove(currentChess, 2);
-        } else {
-          // Serious play at depth 4 with positional awareness
-          selectedMove = getBestMove(currentChess, 4);
+          setIsEngineThinking(false);
+          worker.removeEventListener('message', onMessage);
         }
-        
-        makeMove(selectedMove);
-      }, 600); // Slightly faster response feel, but deep calculation takes over
-      
-      return () => clearTimeout(timer);
+      };
+
+      worker.addEventListener('message', onMessage);
+
+      let skillLevel = 20;
+      let moveTime = 1000;
+
+      if (settings.difficulty === 'easy') {
+        skillLevel = 0;
+        moveTime = 200;
+      } else if (settings.difficulty === 'medium') {
+        skillLevel = 8;
+        moveTime = 600;
+      }
+
+      worker.postMessage(`setoption name Skill Level value ${skillLevel}`);
+      worker.postMessage(`position fen ${game.fen()}`);
+      worker.postMessage(`go movetime ${moveTime}`);
     }
-  }, [game, settings, makeMove]);
+  }, [game, settings, makeMove, isEngineThinking]);
 
   const onSquareClick = (square: Square) => {
-    if (game.isGameOver() || isHugging) return;
+    if (game.isGameOver() || isHugging || isEngineThinking) return;
     const piece = game.get(square);
+    
+    // Select a piece
     if (piece && piece.color === game.turn()) {
       setSelectedSquare(square);
       const moves = game.moves({ square, verbose: true });
       setValidMoves(moves.map(m => m.to));
       return;
     }
+
+    // Try to move to a square
     if (selectedSquare) {
       const moveSuccess = makeMove({
         from: selectedSquare,
         to: square,
         promotion: 'q'
       });
+      
       if (moveSuccess) {
         setSelectedSquare(null);
         setValidMoves([]);
       } else {
+        // If move failed, and we didn't click another of our pieces, clear selection
         if (!piece || piece.color !== game.turn()) {
           setSelectedSquare(null);
           setValidMoves([]);
@@ -305,7 +222,7 @@ const GameBoard: React.FC<GameBoardProps> = ({ game, setGame, settings, onEnd, s
         const isValidMoveTarget = validMoves.includes(square);
         const isLastMoveFrom = lastMove?.from === square;
         const isLastMoveTo = lastMove?.to === square;
-        const pieceId = pieceIdMap[square];
+        const pieceId = pieceIdMap[square] || `${square}-empty`;
         
         const headpiece = 
           (piece?.color === 'w' && piece?.type === 'k') ? PIECE_MAP['wk_head'] : 
@@ -317,7 +234,7 @@ const GameBoard: React.FC<GameBoardProps> = ({ game, setGame, settings, onEnd, s
           <div
             key={square}
             onClick={() => onSquareClick(square)}
-            className={`relative flex items-center justify-center cursor-pointer select-none square-inner-shadow`}
+            className="relative flex items-center justify-center cursor-pointer select-none square-inner-shadow"
             style={{ 
               backgroundColor: isLight ? '#F8FAFC' : '#D1FAE5',
               width: '100%',
@@ -362,14 +279,11 @@ const GameBoard: React.FC<GameBoardProps> = ({ game, setGame, settings, onEnd, s
                   }}
                 >
                   <div className="relative flex flex-col items-center">
-                     {/* Headpiece (Crown/Bow) - Positioned PERFECTLY on the head */}
                      {headpiece && (
                       <span className="absolute -top-[45%] text-xl md:text-3xl z-30 select-none pointer-events-none">
                         {headpiece}
                       </span>
                     )}
-
-                    {/* Base Character Emoji */}
                     <span className="text-3xl md:text-5xl leading-none">
                       {PIECE_MAP[`${piece.color}${piece.type}`]}
                     </span>
@@ -378,7 +292,6 @@ const GameBoard: React.FC<GameBoardProps> = ({ game, setGame, settings, onEnd, s
               </div>
             )}
 
-            {/* Hug Hearts */}
             <AnimatePresence>
                 {isHugging && piece && (
                     <motion.div
