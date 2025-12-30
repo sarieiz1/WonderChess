@@ -4,12 +4,19 @@ export type PieceColor = 'w' | 'b';
 export type Difficulty = 'easy' | 'medium' | 'hard';
 export type Language = 'en' | 'he';
 
+export interface UserProfile {
+  name: string;
+  email: string;
+  picture: string;
+}
+
 export interface GameResult {
   id: string;
   winner: string;
   winnerTeam: 'Penguins' | 'Butterflies' | 'Draw';
   player1: string;
   player1Team: 'w' | 'b';
+  player1Picture?: string;
   player2: string;
   player2Team: 'w' | 'b';
   date: string;

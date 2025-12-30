@@ -1,10 +1,10 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Chess, Move } from 'chess.js';
 import confetti from 'canvas-confetti';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Trophy, Users, User, Heart, Settings, Home, Sparkles, Volume2, VolumeX, Languages, BookOpen } from 'lucide-react';
-import { GameStatus, GameSettings, GameResult, Language } from './types';
+import { Trophy, Users, User as UserIcon, Heart, Settings, Home, Sparkles, Volume2, VolumeX, Languages, BookOpen, LogOut, LogIn } from 'lucide-react';
+import { GameStatus, GameSettings, GameResult, Language, UserProfile } from './types';
 import { COLORS, TRANSLATIONS } from './constants';
 import GameBoard from './components/GameBoard';
 import SetupScreen from './components/SetupScreen';
@@ -12,12 +12,20 @@ import HallOfFame from './components/HallOfFame';
 import Coach from './components/Coach';
 import { soundManager } from './utils/audio';
 
+// IMPORTANT: Replace this with your actual Google Client ID from the Google Cloud Console
+// https://console.cloud.google.com/apis/credentials
+const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com";
+
 const App: React.FC = () => {
   const [status, setStatus] = useState<GameStatus>(GameStatus.SETUP);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [lang, setLang] = useState<Language>('en');
+  const [user, setUser] = useState<UserProfile | null>(() => {
+    const saved = localStorage.getItem('wonderchess_user');
+    return saved ? JSON.parse(saved) : null;
+  });
   const [settings, setSettings] = useState<GameSettings>({
-    player1: 'Michael',
+    player1: user?.name || 'Michael',
     player2: 'Computer',
     isComputer: true,
     userTeam: 'w',
@@ -29,8 +37,89 @@ const App: React.FC = () => {
   const [isHugging, setIsHugging] = useState(false);
   const [coachMood, setCoachMood] = useState<'idle' | 'happy' | 'encouraging'>('idle');
   const [lastMessage, setLastMessage] = useState('');
+  const googleBtnRef = useRef<HTMLDivElement>(null);
 
   const t = TRANSLATIONS[lang];
+
+  // Robust JWT Decoder for handling UTF-8 characters (like Hebrew)
+  const decodeJwt = (token: string) => {
+    try {
+      const base64Url = token.split('.')[1];
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+      const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+      }).join(''));
+      return JSON.parse(jsonPayload);
+    } catch (e) {
+      console.error("JWT Decode failed", e);
+      return null;
+    }
+  };
+
+  // Google Auth Initialization
+  useEffect(() => {
+    /* global google */
+    const handleCredentialResponse = (response: any) => {
+      const payload = decodeJwt(response.credential);
+      if (payload) {
+        const newUser: UserProfile = {
+          name: payload.name,
+          email: payload.email,
+          picture: payload.picture
+        };
+        setUser(newUser);
+        localStorage.setItem('wonderchess_user', JSON.stringify(newUser));
+        setSettings(prev => ({ ...prev, player1: newUser.name }));
+      }
+    };
+
+    const interval = setInterval(() => {
+      if ((window as any).google && (window as any).google.accounts) {
+        clearInterval(interval);
+        const google = (window as any).google;
+        
+        google.accounts.id.initialize({
+          client_id: GOOGLE_CLIENT_ID,
+          callback: handleCredentialResponse,
+          auto_select: false,
+          itp_support: true,
+          use_fedcm_for_prompt: true
+        });
+        
+        if (googleBtnRef.current) {
+          // Check if already rendered to prevent flickering
+          if (googleBtnRef.current.children.length === 0) {
+            google.accounts.id.renderButton(googleBtnRef.current, {
+              type: "icon",
+              theme: "filled_blue", // Switched to filled_blue for maximum visibility
+              size: "large",
+              shape: "circle",
+            });
+          }
+        }
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [user]);
+
+  const handleSignOut = () => {
+    setUser(null);
+    localStorage.removeItem('wonderchess_user');
+    setSettings(prev => ({ ...prev, player1: lang === 'he' ? 'מיכאל' : 'Michael' }));
+  };
+
+  const triggerGoogleLogin = () => {
+    if (GOOGLE_CLIENT_ID.includes("YOUR_GOOGLE_CLIENT_ID")) {
+      alert("Wonderchess: Please replace the placeholder GOOGLE_CLIENT_ID in App.tsx with a valid ID from Google Cloud Console.");
+      return;
+    }
+    try {
+      (window as any).google.accounts.id.prompt();
+    } catch (e) {
+      console.warn("One Tap prompt failed", e);
+    }
+  };
 
   useEffect(() => {
     if (lastMessage && soundEnabled) {
@@ -48,14 +137,15 @@ const App: React.FC = () => {
     const newLang = lang === 'en' ? 'he' : 'en';
     setLang(newLang);
     setSettings(prev => ({ ...prev, language: newLang }));
+    if (!user) {
+      setSettings(prev => ({ ...prev, player1: newLang === 'he' ? 'מיכאל' : 'Michael' }));
+    }
   };
 
   const triggerHug = () => {
     if (isHugging) return;
-    
     setIsHugging(true);
     
-    // Magical Multi-Shape Confetti
     const duration = 3000;
     const animationEnd = Date.now() + duration;
     const defaults = { 
@@ -76,7 +166,6 @@ const App: React.FC = () => {
 
       const particleCount = 50 * (timeLeft / duration);
       
-      // Left side burst
       confetti({ 
         ...defaults, 
         particleCount, 
@@ -84,7 +173,6 @@ const App: React.FC = () => {
         colors: ['#FFB6C1', '#FF69B4', '#FF1493', '#FFD700', '#7FFFD4', '#00BFFF']
       });
       
-      // Right side burst
       confetti({ 
         ...defaults, 
         particleCount, 
@@ -93,8 +181,7 @@ const App: React.FC = () => {
       });
     }, 250);
 
-    if (soundEnabled) soundManager.playCapture(); // Chime sound
-    
+    if (soundEnabled) soundManager.playCapture(); 
     setShowHug(true);
     setCoachMood('happy');
     const hugMsg = `${t.doingGreat} ${t.needsHug}`;
@@ -113,6 +200,7 @@ const App: React.FC = () => {
       winnerTeam,
       player1: settings.player1,
       player1Team: settings.userTeam,
+      player1Picture: user?.picture,
       player2: settings.player2,
       player2Team: settings.userTeam === 'w' ? 'b' : 'w',
       date: new Date().toLocaleDateString(lang === 'he' ? 'he-IL' : 'en-US'),
@@ -136,31 +224,74 @@ const App: React.FC = () => {
       className={`min-h-screen bg-blue-50 text-slate-800 flex flex-col items-center p-4 md:p-8 ${lang === 'he' ? 'rtl font-[Quicksand,sans-serif]' : 'ltr'}`}
       dir={lang === 'he' ? 'rtl' : 'ltr'}
     >
-      <header className="w-full max-w-4xl flex justify-between items-center mb-6">
+      <header className="w-full max-w-5xl flex flex-wrap justify-between items-center mb-6 gap-4">
         <div className="flex items-center gap-3">
-          <div className="bg-white p-2 rounded-2xl shadow-sm">
+          <motion.div 
+            whileHover={{ scale: 1.1, rotate: 5 }}
+            className="bg-white p-2 rounded-2xl shadow-sm cursor-pointer"
+            onClick={() => setStatus(GameStatus.SETUP)}
+          >
             <Sparkles className="text-yellow-400 w-8 h-8" />
-          </div>
+          </motion.div>
           <h1 className="text-2xl md:text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-pink-500">
             {t.title}
           </h1>
         </div>
         
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2 items-center">
+          <div className="flex items-center gap-2">
+            {user ? (
+              <motion.div 
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                className="flex items-center gap-2 bg-white/80 backdrop-blur-sm pr-1 pl-3 py-1 rounded-full shadow-sm border border-blue-100"
+              >
+                <span className="text-sm font-bold text-slate-700 hidden sm:inline">{user.name}</span>
+                <img src={user.picture} alt={user.name} className="w-8 h-8 rounded-full border-2 border-blue-400" />
+                <button 
+                  onClick={handleSignOut}
+                  className="p-1.5 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-full transition-colors"
+                  title={t.signOut}
+                >
+                  <LogOut size={16} />
+                </button>
+              </motion.div>
+            ) : (
+              <div className="flex items-center gap-2 relative z-50">
+                {/* Standard size for Google Icon is 40px */}
+                <div 
+                  ref={googleBtnRef} 
+                  style={{ width: '40px', height: '40px' }}
+                  className="flex items-center justify-center bg-white rounded-full shadow-sm"
+                ></div>
+                
+                {/* Mobile Fallback Icon */}
+                <button 
+                  onClick={triggerGoogleLogin}
+                  className="p-2 bg-white text-blue-500 rounded-full shadow-sm border border-slate-100 hover:bg-blue-50 transition-all sm:hidden"
+                  title={t.signIn}
+                >
+                  <LogIn size={20} />
+                </button>
+              </div>
+            )}
+          </div>
+
           <button 
             onClick={toggleLanguage}
             className="p-2 bg-white rounded-xl shadow-sm hover:shadow-md transition-all text-slate-600 flex items-center gap-1 text-sm font-bold"
-            title="Change Language"
           >
             <Languages size={20} />
             <span className="hidden sm:inline">{lang === 'en' ? 'EN / עב' : 'עב / EN'}</span>
           </button>
+          
           <button 
             onClick={toggleSound}
             className={`p-2 bg-white rounded-xl shadow-sm hover:shadow-md transition-all ${soundEnabled ? 'text-blue-500' : 'text-slate-400'}`}
           >
             {soundEnabled ? <Volume2 size={24} /> : <VolumeX size={24} />}
           </button>
+
           <button 
             onClick={() => setStatus(GameStatus.HALL_OF_FAME)}
             className="p-2 bg-white rounded-xl shadow-sm hover:shadow-md transition-all text-indigo-600"
@@ -168,6 +299,7 @@ const App: React.FC = () => {
           >
             <BookOpen size={24} />
           </button>
+          
           {status !== GameStatus.SETUP && (
             <button 
               onClick={() => setStatus(GameStatus.SETUP)}
@@ -189,7 +321,7 @@ const App: React.FC = () => {
               exit={{ opacity: 0, y: -20 }}
               className="w-full max-w-md"
             >
-              <SetupScreen onStart={startNewGame} language={lang} />
+              <SetupScreen onStart={startNewGame} language={lang} user={user} />
             </motion.div>
           )}
 
@@ -211,7 +343,6 @@ const App: React.FC = () => {
                 />
                 
                 <div className="relative group">
-                  {/* Outer Pulsing Glow */}
                   <motion.div
                     animate={{ 
                       scale: [1, 1.2, 1],
@@ -268,13 +399,16 @@ const App: React.FC = () => {
                      {t.players}
                    </h3>
                    <div className="space-y-3">
-                      <div className={`p-3 rounded-2xl border-2 ${game.turn() === 'w' ? 'border-blue-400 bg-blue-50' : 'border-transparent bg-slate-50'}`}>
+                      <div className={`p-3 rounded-2xl border-2 transition-all ${game.turn() === 'w' ? 'border-blue-400 bg-blue-50' : 'border-transparent bg-slate-50'}`}>
                         <div className="flex items-center justify-between">
-                          <span className="flex items-center gap-2">🐧 <span className="font-semibold">{settings.player1}</span></span>
+                          <span className="flex items-center gap-2">
+                            {user ? <img src={user.picture} className="w-5 h-5 rounded-full" /> : '🐧'}
+                            <span className="font-semibold">{settings.player1}</span>
+                          </span>
                           {game.turn() === 'w' && <span className="text-xs bg-blue-500 text-white px-2 py-0.5 rounded-full animate-pulse">{t.yourTurn}</span>}
                         </div>
                       </div>
-                      <div className={`p-3 rounded-2xl border-2 ${game.turn() === 'b' ? 'border-green-400 bg-green-50' : 'border-transparent bg-slate-50'}`}>
+                      <div className={`p-3 rounded-2xl border-2 transition-all ${game.turn() === 'b' ? 'border-green-400 bg-green-50' : 'border-transparent bg-slate-50'}`}>
                         <div className="flex items-center justify-between">
                           <span className="flex items-center gap-2">🦋 <span className="font-semibold">{settings.player2}</span></span>
                           {game.turn() === 'b' && <span className="text-xs bg-green-500 text-white px-2 py-0.5 rounded-full animate-pulse">{t.thinking}</span>}

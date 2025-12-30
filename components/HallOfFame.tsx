@@ -42,7 +42,6 @@ const HallOfFame: React.FC<HallOfFameProps> = ({ onClose, language }) => {
               key={game.id} 
               className="group relative p-6 bg-white rounded-[2rem] border-2 border-slate-100 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all overflow-hidden"
             >
-              {/* Card Header */}
               <div className="flex justify-between items-center mb-4 border-b border-slate-50 pb-3">
                 <span className="flex items-center gap-2 text-xs font-black text-slate-400 uppercase tracking-widest">
                   <Calendar size={14} />
@@ -57,11 +56,13 @@ const HallOfFame: React.FC<HallOfFameProps> = ({ onClose, language }) => {
                 </span>
               </div>
               
-              {/* Battle Layout */}
               <div className={`flex items-center gap-4 justify-between ${isRtl ? 'flex-row-reverse' : ''}`}>
-                {/* Player 1 */}
                 <div className={`flex-1 flex flex-col items-center gap-2 p-3 rounded-2xl transition-colors ${game.winner === game.player1 ? 'bg-yellow-50 border border-yellow-100' : 'bg-slate-50'}`}>
-                  <span className="text-4xl">{game.player1Team === 'w' ? '🐧' : '🦋'}</span>
+                  {game.player1Picture ? (
+                    <img src={game.player1Picture} className="w-10 h-10 rounded-full border-2 border-blue-400 shadow-sm" alt={game.player1} />
+                  ) : (
+                    <span className="text-4xl">{game.player1Team === 'w' ? '🐧' : '🦋'}</span>
+                  )}
                   <span className={`font-black text-sm truncate w-full text-center ${game.winner === game.player1 ? 'text-slate-900' : 'text-slate-500'}`}>
                     {game.player1}
                   </span>
@@ -74,7 +75,6 @@ const HallOfFame: React.FC<HallOfFameProps> = ({ onClose, language }) => {
                    </div>
                 </div>
 
-                {/* Player 2 */}
                 <div className={`flex-1 flex flex-col items-center gap-2 p-3 rounded-2xl transition-colors ${game.winner === game.player2 ? 'bg-yellow-50 border border-yellow-100' : 'bg-slate-50'}`}>
                   <span className="text-4xl">{game.player2Team === 'w' ? '🐧' : '🦋'}</span>
                   <span className={`font-black text-sm truncate w-full text-center ${game.winner === game.player2 ? 'text-slate-900' : 'text-slate-500'}`}>
@@ -84,7 +84,6 @@ const HallOfFame: React.FC<HallOfFameProps> = ({ onClose, language }) => {
                 </div>
               </div>
 
-              {/* Winner Footer */}
               {game.winner !== 'Draw' && (
                 <div className="mt-4 pt-4 border-t border-slate-50 flex items-center justify-center gap-2 bg-gradient-to-r from-transparent via-yellow-50 to-transparent">
                   <Trophy className="text-yellow-500" size={18} />

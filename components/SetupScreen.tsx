@@ -1,27 +1,32 @@
 
 import React, { useState, useEffect } from 'react';
-import { GameSettings, Difficulty, Language } from '../types';
-import { User, Users, Bot, Star, Shield, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { GameSettings, Difficulty, Language, UserProfile } from '../types';
+import { User as UserIcon, Users, Bot, Star, Shield, ShieldAlert, ShieldCheck, CheckCircle2 } from 'lucide-react';
 import { TRANSLATIONS } from '../constants';
 
 interface SetupScreenProps {
   onStart: (settings: GameSettings) => void;
   language: Language;
+  user: UserProfile | null;
 }
 
-const SetupScreen: React.FC<SetupScreenProps> = ({ onStart, language }) => {
+const SetupScreen: React.FC<SetupScreenProps> = ({ onStart, language, user }) => {
   const t = TRANSLATIONS[language];
-  const [player1, setPlayer1] = useState(language === 'he' ? 'מיכאל' : 'Michael');
+  const [player1, setPlayer1] = useState(user?.name || (language === 'he' ? 'מיכאל' : 'Michael'));
   const [isComputer, setIsComputer] = useState(true);
   const [player2, setPlayer2] = useState(t.computer);
   const [userTeam, setUserTeam] = useState<'w' | 'b'>('w');
   const [difficulty, setDifficulty] = useState<Difficulty>('medium');
 
-  // Update name when language switches if it hasn't been edited
+  // Update name when user signs in or language switches
   useEffect(() => {
-    if (player1 === 'Michael' && language === 'he') setPlayer1('מיכאל');
-    if (player1 === 'מיכאל' && language === 'en') setPlayer1('Michael');
-  }, [language]);
+    if (user) {
+      setPlayer1(user.name);
+    } else {
+      if (player1 === 'Michael' && language === 'he') setPlayer1('מיכאל');
+      if (player1 === 'מיכאל' && language === 'en') setPlayer1('Michael');
+    }
+  }, [language, user]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,15 +56,23 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onStart, language }) => {
         <div>
           <label className="block text-sm font-bold text-slate-700 mb-2">{t.yourName}</label>
           <div className="relative">
-            <User className={`absolute ${language === 'he' ? 'right-4' : 'left-4'} top-1/2 -translate-y-1/2 text-slate-400`} size={20} />
+            {user ? (
+               <img src={user.picture} className={`absolute ${language === 'he' ? 'right-4' : 'left-4'} top-1/2 -translate-y-1/2 w-6 h-6 rounded-full border border-blue-200`} />
+            ) : (
+               <UserIcon className={`absolute ${language === 'he' ? 'right-4' : 'left-4'} top-1/2 -translate-y-1/2 text-slate-400`} size={20} />
+            )}
             <input
               type="text"
               value={player1}
               onChange={(e) => setPlayer1(e.target.value)}
-              className={`w-full ${language === 'he' ? 'pr-12 pl-4' : 'pl-12 pr-4'} py-4 bg-slate-50 rounded-2xl border-2 border-transparent focus:border-blue-400 focus:bg-white outline-none transition-all font-semibold`}
+              disabled={!!user}
+              className={`w-full ${language === 'he' ? 'pr-12 pl-12' : 'pl-12 pr-12'} py-4 bg-slate-50 rounded-2xl border-2 border-transparent focus:border-blue-400 focus:bg-white outline-none transition-all font-semibold ${user ? 'text-slate-500 cursor-not-allowed' : ''}`}
               placeholder="..."
               required
             />
+            {user && (
+              <CheckCircle2 className={`absolute ${language === 'he' ? 'left-4' : 'right-4'} top-1/2 -translate-y-1/2 text-green-500`} size={20} />
+            )}
           </div>
         </div>
 

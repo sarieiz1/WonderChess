@@ -64,6 +64,9 @@ export const TRANSLATIONS = {
     snowman: "Friendly Snowman",
     computer: "Computer",
     date: "Date",
+    signIn: "Sign in",
+    signOut: "Sign out",
+    signedInAs: "Signed in as",
   },
   he: {
     title: "שחמט הפלאות",
@@ -100,6 +103,9 @@ export const TRANSLATIONS = {
     snowman: "איש שלג ידידותי",
     computer: "מחשב",
     date: "תאריך",
+    signIn: "התחבר",
+    signOut: "התנתק",
+    signedInAs: "מחובר כ-",
   }
 };
 
