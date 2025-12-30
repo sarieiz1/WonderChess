@@ -1,5 +1,4 @@
 
-import { GoogleGenAI, Modality } from "@google/genai";
 import { Language } from "../types";
 
 class SoundManager {
@@ -66,24 +65,22 @@ class SoundManager {
     this.init();
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      // Prefixing the prompt to guide the model towards generating audio content
-      const prompt = `Say cheerfully: ${text}`;
-      
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash-preview-tts",
-        contents: [{ parts: [{ text: prompt }] }],
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: lang === 'he' ? 'Puck' : 'Kore' },
-            },
-          },
+      // Call the backend API route instead of direct Gemini API
+      const response = await fetch('/api/gemini-tts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
+        body: JSON.stringify({ text, lang }),
       });
 
-      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (!response.ok) {
+        throw new Error(`API returned ${response.status}`);
+      }
+
+      const data = await response.json();
+      const base64Audio = data.audio;
+      
       if (base64Audio) {
         const audioData = this.decode(base64Audio);
         const audioBuffer = await this.decodeAudioData(audioData, this.ctx!, 24000, 1);
@@ -92,7 +89,7 @@ class SoundManager {
         source.connect(this.ctx!.destination);
         source.start();
       } else {
-        // Fallback if the API returned success but no audio data (e.g. non-audio response)
+        // Fallback if the API returned success but no audio data
         this.speakFallback(text, lang);
       }
     } catch (error) {

@@ -11,21 +11,17 @@ import SetupScreen from './components/SetupScreen';
 import HallOfFame from './components/HallOfFame';
 import Coach from './components/Coach';
 import { soundManager } from './utils/audio';
-
-// IMPORTANT: Replace this with your actual Google Client ID from the Google Cloud Console
-// https://console.cloud.google.com/apis/credentials
-const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com";
+import { signInWithGoogle, signOut as firebaseSignOut, onAuthStateChange, firebaseUserToProfile, getCurrentUser } from './lib/auth';
+import { saveGameResult, migrateLocalStorageToFirestore } from './lib/firestore';
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<GameStatus>(GameStatus.SETUP);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [lang, setLang] = useState<Language>('en');
-  const [user, setUser] = useState<UserProfile | null>(() => {
-    const saved = localStorage.getItem('wonderchess_user');
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [settings, setSettings] = useState<GameSettings>({
-    player1: user?.name || 'Michael',
+    player1: 'Michael',
     player2: 'Computer',
     isComputer: true,
     userTeam: 'w',
@@ -37,87 +33,69 @@ const App: React.FC = () => {
   const [isHugging, setIsHugging] = useState(false);
   const [coachMood, setCoachMood] = useState<'idle' | 'happy' | 'encouraging'>('idle');
   const [lastMessage, setLastMessage] = useState('');
-  const googleBtnRef = useRef<HTMLDivElement>(null);
 
   const t = TRANSLATIONS[lang];
 
-  // Robust JWT Decoder for handling UTF-8 characters (like Hebrew)
-  const decodeJwt = (token: string) => {
-    try {
-      const base64Url = token.split('.')[1];
-      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-      const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
-          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-      }).join(''));
-      return JSON.parse(jsonPayload);
-    } catch (e) {
-      console.error("JWT Decode failed", e);
-      return null;
-    }
-  };
-
-  // Google Auth Initialization
+  // Firebase Auth State Management
   useEffect(() => {
-    /* global google */
-    const handleCredentialResponse = (response: any) => {
-      const payload = decodeJwt(response.credential);
-      if (payload) {
-        const newUser: UserProfile = {
-          name: payload.name,
-          email: payload.email,
-          picture: payload.picture
-        };
-        setUser(newUser);
-        localStorage.setItem('wonderchess_user', JSON.stringify(newUser));
-        setSettings(prev => ({ ...prev, player1: newUser.name }));
-      }
-    };
-
-    const interval = setInterval(() => {
-      if ((window as any).google && (window as any).google.accounts) {
-        clearInterval(interval);
-        const google = (window as any).google;
+    const unsubscribe = onAuthStateChange(async (firebaseUser) => {
+      setIsLoadingAuth(false);
+      if (firebaseUser) {
+        const profile = firebaseUserToProfile(firebaseUser);
+        setUser(profile);
+        setSettings(prev => ({ ...prev, player1: profile.name }));
         
-        google.accounts.id.initialize({
-          client_id: GOOGLE_CLIENT_ID,
-          callback: handleCredentialResponse,
-          auto_select: false,
-          itp_support: true,
-          use_fedcm_for_prompt: true
-        });
-        
-        if (googleBtnRef.current) {
-          // Check if already rendered to prevent flickering
-          if (googleBtnRef.current.children.length === 0) {
-            google.accounts.id.renderButton(googleBtnRef.current, {
-              type: "icon",
-              theme: "filled_blue", // Switched to filled_blue for maximum visibility
-              size: "large",
-              shape: "circle",
-            });
+        // Migrate localStorage data to Firestore on first login
+        const migrationKey = `migration_${firebaseUser.uid}`;
+        const hasMigrated = localStorage.getItem(migrationKey);
+        if (!hasMigrated) {
+          try {
+            await migrateLocalStorageToFirestore(firebaseUser.uid);
+            localStorage.setItem(migrationKey, 'true');
+          } catch (error) {
+            console.error('Migration failed:', error);
           }
         }
+      } else {
+        setUser(null);
+        setSettings(prev => ({ ...prev, player1: lang === 'he' ? 'מיכאל' : 'Michael' }));
       }
-    }, 1000);
+    });
 
-    return () => clearInterval(interval);
-  }, [user]);
+    return () => unsubscribe();
+  }, [lang]);
 
-  const handleSignOut = () => {
-    setUser(null);
-    localStorage.removeItem('wonderchess_user');
-    setSettings(prev => ({ ...prev, player1: lang === 'he' ? 'מיכאל' : 'Michael' }));
+  // Update player1 name when user changes
+  useEffect(() => {
+    if (user) {
+      setSettings(prev => ({ ...prev, player1: user.name }));
+    } else {
+      setSettings(prev => ({ ...prev, player1: lang === 'he' ? 'מיכאל' : 'Michael' }));
+    }
+  }, [user, lang]);
+
+  const handleSignIn = async () => {
+    try {
+      setIsLoadingAuth(true);
+      const profile = await signInWithGoogle();
+      if (profile) {
+        setUser(profile);
+        setSettings(prev => ({ ...prev, player1: profile.name }));
+      }
+    } catch (error) {
+      console.error('Sign in error:', error);
+    } finally {
+      setIsLoadingAuth(false);
+    }
   };
 
-  const triggerGoogleLogin = () => {
-    if (GOOGLE_CLIENT_ID.includes("YOUR_GOOGLE_CLIENT_ID")) {
-      alert("Wonderchess: Please replace the placeholder GOOGLE_CLIENT_ID in App.tsx with a valid ID from Google Cloud Console.");
-      return;
-    }
+  const handleSignOut = async () => {
     try {
-      (window as any).google.accounts.id.prompt();
-    } catch (e) {
-      console.warn("One Tap prompt failed", e);
+      await firebaseSignOut();
+      setUser(null);
+      setSettings(prev => ({ ...prev, player1: lang === 'he' ? 'מיכאל' : 'Michael' }));
+    } catch (error) {
+      console.error('Sign out error:', error);
     }
   };
 
@@ -193,7 +171,7 @@ const App: React.FC = () => {
     }, 3000);
   };
 
-  const handleGameEnd = (winner: string, winnerTeam: 'Penguins' | 'Butterflies' | 'Draw') => {
+  const handleGameEnd = async (winner: string, winnerTeam: 'Penguins' | 'Butterflies' | 'Draw') => {
     const result: GameResult = {
       id: Date.now().toString(),
       winner,
@@ -207,8 +185,17 @@ const App: React.FC = () => {
       duration: 'N/A'
     };
     
-    const history = JSON.parse(localStorage.getItem('chess_hall_of_fame') || '[]');
-    localStorage.setItem('chess_hall_of_fame', JSON.stringify([result, ...history]));
+    // Save to Firestore
+    try {
+      const firebaseUser = getCurrentUser();
+      await saveGameResult(result, firebaseUser?.uid);
+    } catch (error) {
+      console.error('Error saving game result:', error);
+      // Fallback to localStorage if Firestore fails
+      const history = JSON.parse(localStorage.getItem('chess_hall_of_fame') || '[]');
+      localStorage.setItem('chess_hall_of_fame', JSON.stringify([result, ...history]));
+    }
+    
     setStatus(GameStatus.FINISHED);
   };
 
@@ -257,23 +244,14 @@ const App: React.FC = () => {
                 </button>
               </motion.div>
             ) : (
-              <div className="flex items-center gap-2 relative z-50">
-                {/* Standard size for Google Icon is 40px */}
-                <div 
-                  ref={googleBtnRef} 
-                  style={{ width: '40px', height: '40px' }}
-                  className="flex items-center justify-center bg-white rounded-full shadow-sm"
-                ></div>
-                
-                {/* Mobile Fallback Icon */}
-                <button 
-                  onClick={triggerGoogleLogin}
-                  className="p-2 bg-white text-blue-500 rounded-full shadow-sm border border-slate-100 hover:bg-blue-50 transition-all sm:hidden"
-                  title={t.signIn}
-                >
-                  <LogIn size={20} />
-                </button>
-              </div>
+              <button
+                onClick={handleSignIn}
+                disabled={isLoadingAuth}
+                className="p-2 bg-white text-blue-500 rounded-full shadow-sm border border-slate-100 hover:bg-blue-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                title={t.signIn}
+              >
+                <LogIn size={20} />
+              </button>
             )}
           </div>
 

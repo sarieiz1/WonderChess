@@ -1,8 +1,9 @@
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Trophy, ChevronLeft, Calendar, User, Crown, BookOpen } from 'lucide-react';
 import { GameResult, Language } from '../types';
 import { TRANSLATIONS } from '../constants';
+import { getGameHistory } from '../lib/firestore';
 
 interface HallOfFameProps {
   onClose: () => void;
@@ -11,8 +12,34 @@ interface HallOfFameProps {
 
 const HallOfFame: React.FC<HallOfFameProps> = ({ onClose, language }) => {
   const t = TRANSLATIONS[language];
-  const history: GameResult[] = JSON.parse(localStorage.getItem('chess_hall_of_fame') || '[]');
+  const [history, setHistory] = useState<GameResult[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const isRtl = language === 'he';
+
+  useEffect(() => {
+    const loadHistory = async () => {
+      try {
+        setIsLoading(true);
+        const games = await getGameHistory();
+        setHistory(games);
+        
+        // Fallback to localStorage if Firestore is empty
+        if (games.length === 0) {
+          const localHistory = JSON.parse(localStorage.getItem('chess_hall_of_fame') || '[]');
+          setHistory(localHistory);
+        }
+      } catch (error) {
+        console.error('Error loading game history:', error);
+        // Fallback to localStorage on error
+        const localHistory = JSON.parse(localStorage.getItem('chess_hall_of_fame') || '[]');
+        setHistory(localHistory);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadHistory();
+  }, []);
 
   return (
     <div className="bg-white p-6 md:p-10 rounded-[3rem] shadow-2xl border-b-8 border-indigo-100">
@@ -31,7 +58,12 @@ const HallOfFame: React.FC<HallOfFameProps> = ({ onClose, language }) => {
       </div>
 
       <div className="space-y-6 max-h-[65vh] overflow-y-auto pr-2 custom-scrollbar">
-        {history.length === 0 ? (
+        {isLoading ? (
+          <div className="text-center py-16 bg-slate-50 rounded-[2rem] border-4 border-dashed border-slate-200">
+            <div className="text-7xl mb-6 grayscale opacity-20 animate-pulse">📖</div>
+            <p className="text-slate-400 font-bold text-xl">Loading...</p>
+          </div>
+        ) : history.length === 0 ? (
           <div className="text-center py-16 bg-slate-50 rounded-[2rem] border-4 border-dashed border-slate-200">
             <div className="text-7xl mb-6 grayscale opacity-20">📖</div>
             <p className="text-slate-400 font-bold text-xl">{t.firstTrophy}</p>
